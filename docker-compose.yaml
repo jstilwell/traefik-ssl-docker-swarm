@@ -1,0 +1,71 @@
+services:
+  traefik:
+    # Application proxy via labels, middlewares, and rules.
+    # Docs: https://doc.traefik.io/traefik/
+    image: "traefik:v3.1.4"
+    networks:
+      - ingress-proxy
+    command:
+      - "--log.level=INFO"
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls=true"
+      # Redirect HTTP to HTTPS
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entryPoint.permanent=true"
+      # Swarm Provider - https://doc.traefik.io/traefik/providers/swarm/
+      - "--providers.swarm=true"
+      - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
+      - "--providers.swarm.exposedbydefault=false"
+      # Dynamic Configuration - https://doc.traefik.io/traefik/providers/file/
+      - "--providers.file.directory=/etc/traefik/dynamic_conf"
+      # Logging
+      - "--accesslog=true"
+      - "--accesslog.filePath=/var/log/traefik/access.log"
+      # API and Dashboard
+      - "--api=true"
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - ${PWD}/logs:/var/log/traefik
+      - ${PWD}/config:/etc/traefik/dynamic_conf
+      - /etc/letsencrypt/archive/your-fqdn.example.com/fullchain1.pem:/etc/traefik/certs/fullchain.pem:ro
+      - /etc/letsencrypt/archive/your-fqdn.example.com/privkey1.pem:/etc/traefik/certs/privkey.pem:ro
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - "node.role==manager"
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.websecure.rule=(Host(`your-fqdn.example.com`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`)))"
+        - "traefik.docker.network=ingress-proxy"
+        - "traefik.http.routers.websecure-router.entrypoints=websecure"
+        - "traefik.http.routers.websecure-router.tls=true"
+        - "traefik.http.routers.websecure-router.service=api@internal"
+        - "traefik.http.services.websecure-service.loadbalancer.server.port=8080"
+
+  whoami:
+    image: "traefik/whoami"
+    command:
+      - --port=2001
+      - --name=iamfoo
+    deploy:
+      replicas: 1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.whoami.rule=Host(`your-fqdn.example.com`) && PathPrefix(`/whoami`)"
+        - "traefik.http.services.whoami.loadbalancer.server.port=2001"
+        - "traefik.docker.network=ingress-proxy"
+
+networks:
+  ingress-proxy:
+    driver: overlay
+  # NETWORKNAME_ingress-proxy: # If the network already exists, comment above and use the external instead.
+  #   external: true
